@@ -11,6 +11,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let selectedItemIndices = new Set();
     let isSubfolderEnabled = true;
 
+    let historyData = [];
+    let activeHistoryFilter = 'all';
+    let historySearchQuery = '';
+
     // Elements
     const btnPasteLink = document.getElementById('btnPasteLink');
     const smartModeSwitch = document.getElementById('smartModeSwitch');
@@ -23,11 +27,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const queueTotalText = document.getElementById('queueTotalText');
     const totalSpeedText = document.getElementById('totalSpeedText');
 
+    const btnPauseAll = document.getElementById('btnPauseAll');
+    const btnResumeAll = document.getElementById('btnResumeAll');
+    const btnToolbarLocation = document.getElementById('btnToolbarLocation');
+    const toolbarLocationText = document.getElementById('toolbarLocationText');
+
     // Navigation
     const navDownloads = document.getElementById('navDownloads');
+    const navHistory = document.getElementById('navHistory');
     const navSettings = document.getElementById('navSettings');
     const viewDownloads = document.getElementById('viewDownloads');
+    const viewHistory = document.getElementById('viewHistory');
     const viewSettings = document.getElementById('viewSettings');
+    const historyCountBadge = document.getElementById('historyCountBadge');
+
+    // History View Elements
+    const btnClearHistory = document.getElementById('btnClearHistory');
+    const statCompletedCount = document.getElementById('statCompletedCount');
+    const statTotalSize = document.getElementById('statTotalSize');
+    const statHistoryLocation = document.getElementById('statHistoryLocation');
+    const historySearchInput = document.getElementById('historySearchInput');
+    const historyFilterPills = document.querySelectorAll('.history-filter-pill');
+    const historyEmptyState = document.getElementById('historyEmptyState');
+    const historyList = document.getElementById('historyList');
 
     // Settings Elements
     const settingsOutputDir = document.getElementById('settingsOutputDir');
@@ -90,27 +112,58 @@ document.addEventListener('DOMContentLoaded', () => {
     renderFormatGrid();
     loadSettings();
 
-    // Auto-poll tasks every 1 second
-    setInterval(pollTasks, 1000);
+    // Auto-poll tasks and history every 1 second
+    setInterval(() => {
+        pollTasks();
+        fetchHistory();
+    }, 1000);
+
     pollTasks();
+    fetchHistory();
 
     // Navigation Tabs
-    navDownloads.addEventListener('click', (e) => {
-        e.preventDefault();
-        navDownloads.classList.add('active');
-        navSettings.classList.remove('active');
-        viewDownloads.style.display = 'flex';
-        viewSettings.style.display = 'none';
-    });
+    function switchTab(tabName) {
+        [navDownloads, navHistory, navSettings].forEach(el => el && el.classList.remove('active'));
+        [viewDownloads, viewHistory, viewSettings].forEach(el => el && (el.style.display = 'none'));
 
-    navSettings.addEventListener('click', (e) => {
-        e.preventDefault();
-        navSettings.classList.add('active');
-        navDownloads.classList.remove('active');
-        viewSettings.style.display = 'flex';
-        viewDownloads.style.display = 'none';
-        loadSettings();
-    });
+        if (tabName === 'downloads') {
+            navDownloads.classList.add('active');
+            viewDownloads.style.display = 'flex';
+        } else if (tabName === 'history') {
+            navHistory.classList.add('active');
+            viewHistory.style.display = 'flex';
+            fetchHistory();
+        } else if (tabName === 'settings') {
+            navSettings.classList.add('active');
+            viewSettings.style.display = 'flex';
+            loadSettings();
+        }
+    }
+
+    if (navDownloads) navDownloads.addEventListener('click', (e) => { e.preventDefault(); switchTab('downloads'); });
+    if (navHistory) navHistory.addEventListener('click', (e) => { e.preventDefault(); switchTab('history'); });
+    if (navSettings) navSettings.addEventListener('click', (e) => { e.preventDefault(); switchTab('settings'); });
+
+    // Toolbar & Global Actions
+    if (btnPauseAll) {
+        btnPauseAll.addEventListener('click', async () => {
+            await fetch(`${API_BASE}/pause-all`, { method: 'POST' });
+            pollTasks();
+        });
+    }
+
+    if (btnResumeAll) {
+        btnResumeAll.addEventListener('click', async () => {
+            await fetch(`${API_BASE}/resume-all`, { method: 'POST' });
+            pollTasks();
+        });
+    }
+
+    if (btnToolbarLocation) {
+        btnToolbarLocation.addEventListener('click', () => {
+            switchTab('settings');
+        });
+    }
 
     // Event Listeners
     btnPasteLink.addEventListener('click', handlePasteLink);
@@ -134,13 +187,34 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    // Clear completed tasks button
     btnClearCompleted.addEventListener('click', async () => {
-        await fetch(`${API_BASE}/clear-completed`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
+        await fetch(`${API_BASE}/clear-completed`, { method: 'POST' });
         pollTasks();
+    });
+
+    if (btnClearHistory) {
+        btnClearHistory.addEventListener('click', async () => {
+            if (confirm("Are you sure you want to clear all download history?")) {
+                await fetch(`${API_BASE}/history/clear`, { method: 'POST' });
+                fetchHistory();
+            }
+        });
+    }
+
+    if (historySearchInput) {
+        historySearchInput.addEventListener('input', (e) => {
+            historySearchQuery = e.target.value.trim();
+            renderHistory();
+        });
+    }
+
+    historyFilterPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            historyFilterPills.forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            activeHistoryFilter = pill.dataset.filter;
+            renderHistory();
+        });
     });
 
     speedLimitSelect.addEventListener('change', (e) => {
@@ -160,7 +234,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // FPS Pill Buttons
     const fpsPills = document.querySelectorAll('#fpsSection .pill-btn');
     fpsPills.forEach(pill => {
         pill.addEventListener('click', () => {
@@ -199,6 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ output_dir: newDir })
             });
+            loadSettings();
             alert("Destination directory saved!");
         }
     });
@@ -221,7 +295,12 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const res = await fetch(`${API_BASE}/settings`);
             const data = await res.json();
-            if (data.output_dir) settingsOutputDir.value = data.output_dir;
+            if (data.output_dir) {
+                settingsOutputDir.value = data.output_dir;
+                const displayPath = data.output_dir.length > 28 ? '...' + data.output_dir.slice(-25) : data.output_dir;
+                if (toolbarLocationText) toolbarLocationText.textContent = displayPath;
+                if (statHistoryLocation) statHistoryLocation.textContent = displayPath;
+            }
             if (data.max_concurrent) settingsMaxConcurrent.value = data.max_concurrent;
             if (data.speed_limit) speedLimitSelect.value = data.speed_limit || 'unlimited';
         } catch (e) {
@@ -258,7 +337,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Paste Link Handler
     async function handlePasteLink() {
         try {
             const text = await navigator.clipboard.readText();
@@ -273,7 +351,6 @@ document.addEventListener('DOMContentLoaded', () => {
         manualPasteModal.classList.add('active');
     }
 
-    // Process YouTube URL
     async function processUrl(url) {
         parseModal.classList.add('active');
         try {
@@ -310,7 +387,6 @@ document.addEventListener('DOMContentLoaded', () => {
         mediaTypeBadge.textContent = data.type === 'channel' ? `Channel (${data.total_items} items)` :
                                      data.type === 'playlist' ? `Playlist (${data.total_items} items)` : 'Single Video';
 
-        // Subfolder & Order controls for Channels / Playlists
         if (isSubfolderEnabled && (data.type === 'channel' || data.type === 'playlist')) {
             subfolderInfoSection.style.display = 'block';
             subfolderNameText.textContent = data.title || data.channel_name;
@@ -380,26 +456,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let selectedItems = allItems.filter((_, idx) => selectedItemIndices.has(idx));
 
-        // Ordering Option (Newest vs Oldest vs Original)
         const orderMode = videoOrderSelect.value || 'newest';
         if (orderMode === 'oldest') {
             selectedItems.reverse();
         }
 
         const baseSubfolder = (isSubfolderEnabled && (currentParsedData.type === 'channel' || currentParsedData.type === 'playlist')) ?
-                            (currentParsedData.title || currentParsedData.channel_name) : '';
+                             (currentParsedData.title || currentParsedData.channel_name) : '';
 
         for (let i = 0; i < selectedItems.length; i++) {
             const item = selectedItems[i];
 
-            // Subfolder logic for Channels: separate Videos vs Shorts
             let subfolderPath = baseSubfolder;
             if (baseSubfolder && currentParsedData.type === 'channel') {
                 const isShort = item.url.includes('/shorts/') || (item.title && item.title.toLowerCase().includes('#shorts'));
                 subfolderPath = isShort ? `${baseSubfolder}/Shorts` : `${baseSubfolder}/Videos`;
             }
 
-            // Title numbering prefix so file explorer lists in YouTube order (01_, 02_...)
             const numPrefix = (selectedItems.length > 1) ? `${String(i + 1).padStart(2, '0')}_` : '';
             const finalTitle = numPrefix ? `${numPrefix}${item.title}` : item.title;
 
@@ -423,7 +496,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        navDownloads.click();
+        switchTab('downloads');
         pollTasks();
     }
 
@@ -457,11 +530,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 })
             });
         }
-        navDownloads.click();
+        switchTab('downloads');
         pollTasks();
     }
 
-    // Poll Tasks & Render Queue
+    // Poll Active Tasks
     async function pollTasks() {
         try {
             const res = await fetch(`${API_BASE}/tasks`);
@@ -473,7 +546,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function renderTasks(tasks) {
-        activeCountBadge.textContent = tasks.filter(t => t.status === 'downloading' || t.status === 'queued').length;
+        const activeTasks = tasks.filter(t => t.status === 'downloading' || t.status === 'queued');
+        activeCountBadge.textContent = activeTasks.length;
         queueTotalText.textContent = `${tasks.length} Tasks`;
 
         if (!tasks || tasks.length === 0) {
@@ -503,24 +577,114 @@ document.addEventListener('DOMContentLoaded', () => {
                             ${isCompleted ? `<span style="color:var(--accent-green);"><i class="fa-solid fa-circle-check"></i> Finished</span>` : ''}
                             ${isError ? `<span style="color:var(--danger-red);">${t.error || 'Failed'}</span>` : ''}
                         </div>
+                        ${t.filepath ? `
+                        <div class="task-location-path" title="${t.filepath}">
+                            <i class="fa-solid fa-folder"></i> ${t.filepath}
+                        </div>` : ''}
                         <div class="progress-bar-container">
                             <div class="progress-bar-fill" style="width: ${t.progress}%;"></div>
                         </div>
                     </div>
                     <div class="task-actions">
-                        ${isDownloading ? `<button class="btn btn-icon" onclick="pauseTask('${t.id}')" title="Pause"><i class="fa-solid fa-pause"></i></button>` : ''}
-                        ${isPaused ? `<button class="btn btn-icon" onclick="resumeTask('${t.id}')" title="Resume"><i class="fa-solid fa-play"></i></button>` : ''}
-                        ${isCompleted ? `<button class="btn btn-icon" onclick="openFileFolder('${t.filepath.replace(/\\/g, '\\\\')}')" title="Show in Folder"><i class="fa-solid fa-folder-open"></i></button>` : ''}
-                        <button class="btn btn-icon" onclick="removeTask('${t.id}')" title="Remove"><i class="fa-solid fa-trash"></i></button>
+                        ${isDownloading ? `<button class="btn btn-icon" onclick="pauseTask('${t.id}')" title="Pause Download"><i class="fa-solid fa-pause"></i></button>` : ''}
+                        ${isPaused ? `<button class="btn btn-icon" onclick="resumeTask('${t.id}')" title="Resume Download"><i class="fa-solid fa-play"></i></button>` : ''}
+                        ${isError ? `<button class="btn btn-icon" onclick="resumeTask('${t.id}')" title="Retry Download"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
+                        ${t.filepath ? `<button class="btn btn-icon" onclick="openFileFolder('${t.filepath.replace(/\\/g, '\\\\')}')" title="Show File Location"><i class="fa-solid fa-folder-open"></i></button>` : ''}
+                        <button class="btn btn-icon" onclick="removeTask('${t.id}')" title="Remove Task"><i class="fa-solid fa-trash"></i></button>
                     </div>
                 </div>
             `;
         }).join('');
     }
 
-    // Global action helpers
+    // Persistent History Fetch & Render
+    async function fetchHistory() {
+        try {
+            const res = await fetch(`${API_BASE}/history`);
+            const data = await res.json();
+            historyData = data || [];
+            if (historyCountBadge) historyCountBadge.textContent = historyData.length;
+            renderHistory();
+        } catch (e) {
+            console.log("Could not load history");
+        }
+    }
+
+    function renderHistory() {
+        if (!historyList) return;
+
+        let items = historyData;
+
+        if (activeHistoryFilter === 'video') {
+            items = items.filter(h => h.type === 'video');
+        } else if (activeHistoryFilter === 'audio') {
+            items = items.filter(h => h.type === 'audio');
+        }
+
+        if (historySearchQuery) {
+            const q = historySearchQuery.toLowerCase();
+            items = items.filter(h => (h.title && h.title.toLowerCase().includes(q)) || (h.url && h.url.toLowerCase().includes(q)) || (h.format && h.format.toLowerCase().includes(q)));
+        }
+
+        const completedItems = historyData.filter(h => h.status === 'completed');
+        if (statCompletedCount) statCompletedCount.textContent = completedItems.length;
+
+        const totalBytes = completedItems.reduce((acc, curr) => acc + (curr.filesize || 0), 0);
+        if (statTotalSize) statTotalSize.textContent = formatBytes(totalBytes);
+
+        const historyCountText = document.getElementById('historyCountText');
+        if (historyCountText) historyCountText.textContent = `${items.length} Items`;
+
+        if (items.length === 0) {
+            if (historyEmptyState) historyEmptyState.style.display = 'flex';
+            historyList.innerHTML = '';
+            return;
+        }
+
+        if (historyEmptyState) historyEmptyState.style.display = 'none';
+
+        historyList.innerHTML = items.map(h => {
+            const formattedSize = h.filesize ? formatBytes(h.filesize) : '';
+
+            return `
+                <div class="task-card">
+                    <img class="task-thumb" src="${h.thumbnail || 'https://via.placeholder.com/100x56'}" alt="Thumb" onerror="this.src='https://via.placeholder.com/100x56'">
+                    <div class="task-info">
+                        <div class="task-title" title="${h.title}">${h.title || h.url}</div>
+                        <div class="task-meta">
+                            <span class="status-badge ${h.status}">${h.status}</span>
+                            <span class="tag-badge" style="background:rgba(255,255,255,0.08); padding:2px 8px; border-radius:4px; font-size:11px;">${h.format || h.type}</span>
+                            ${formattedSize ? `<span>${formattedSize}</span>` : ''}
+                            <span>• ${h.timestamp || ''}</span>
+                        </div>
+                        ${h.filepath ? `
+                        <div class="task-location-path" title="${h.filepath}">
+                            <i class="fa-solid fa-folder"></i> ${h.filepath}
+                        </div>` : ''}
+                    </div>
+                    <div class="task-actions">
+                        ${h.filepath ? `<button class="btn btn-icon" onclick="openFileFolder('${h.filepath.replace(/\\/g, '\\\\')}')" title="Open File / Folder"><i class="fa-solid fa-folder-open"></i></button>` : ''}
+                        <button class="btn btn-icon" onclick="redownloadUrl('${h.url.replace(/'/g, "\\'")}')" title="Re-download Video"><i class="fa-solid fa-rotate-right"></i></button>
+                        <button class="btn btn-icon" onclick="removeHistoryItem('${h.id}')" title="Delete Entry"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    // Global Action Helpers
     window.pauseTask = (id) => fetch(`${API_BASE}/pause`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(pollTasks);
     window.resumeTask = (id) => fetch(`${API_BASE}/resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(pollTasks);
     window.removeTask = (id) => fetch(`${API_BASE}/remove`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(pollTasks);
     window.openFileFolder = (filepath) => fetch(`${API_BASE}/open-folder`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: filepath }) });
+    window.removeHistoryItem = (id) => fetch(`${API_BASE}/history/remove`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(fetchHistory);
+    window.redownloadUrl = (url) => processUrl(url);
 });

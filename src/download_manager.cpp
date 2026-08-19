@@ -1,8 +1,10 @@
 #include "download_manager.h"
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <regex>
 #include <cstdlib>
 
@@ -37,10 +39,25 @@ namespace {
         return "./Downloads";
 #endif
     }
+
+    std::string escapeJsonStr(const std::string& input) {
+        std::string out;
+        out.reserve(input.size());
+        for (char c : input) {
+            if (c == '"') out += "\\\"";
+            else if (c == '\\') out += "\\\\";
+            else if (c == '\n') out += "\\n";
+            else if (c == '\r') out += "\\r";
+            else if (c == '\t') out += "\\t";
+            else out += c;
+        }
+        return out;
+    }
 }
 
 DownloadManager::DownloadManager() {
     default_output_dir_ = getSystemDownloadsFolder();
+    loadHistoryFromFile();
     worker_ = std::thread(&DownloadManager::workerThread, this);
 }
 
@@ -107,6 +124,26 @@ bool DownloadManager::resumeTask(const std::string& taskId) {
         }
     }
     return false;
+}
+
+void DownloadManager::pauseAllTasks() {
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    for (auto& task : tasks_) {
+        if (task.status == "downloading" || task.status == "queued") {
+            task.status = "paused";
+            task.cancel_requested = true;
+        }
+    }
+}
+
+void DownloadManager::resumeAllTasks() {
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    for (auto& task : tasks_) {
+        if (task.status == "paused" || task.status == "error") {
+            task.status = "queued";
+            task.cancel_requested = false;
+        }
+    }
 }
 
 bool DownloadManager::removeTask(const std::string& taskId) {
@@ -209,7 +246,7 @@ void DownloadManager::workerThread() {
 
 std::string DownloadManager::buildYtDlpCommand(const DownloadTask& task) {
     std::stringstream cmd;
-    cmd << "yt-dlp --newline --no-colors --no-check-certificates --js-runtimes node --extractor-args \"youtube:player_client=web_embedded,android\" ";
+    cmd << "yt-dlp --continue --newline --no-colors --no-check-certificates --js-runtimes node --extractor-args \"youtube:player_client=web_embedded,android\" ";
 
     const auto& opt = task.options;
 
@@ -361,22 +398,180 @@ void DownloadManager::runTaskProcess(DownloadTask& task) {
     int exitCode = pclose(pipe);
 #endif
 
-    std::lock_guard<std::mutex> lock(tasks_mutex_);
-    for (auto& t : tasks_) {
-        if (t.id == task.id) {
-            if (t.cancel_requested) {
-                if (t.status != "paused") {
-                    t.status = "cancelled";
+    DownloadTask finishedTask;
+    bool shouldAddHistory = false;
+
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        for (auto& t : tasks_) {
+            if (t.id == task.id) {
+                if (t.cancel_requested) {
+                    if (t.status != "paused") {
+                        t.status = "cancelled";
+                    }
+                } else if (exitCode == 0) {
+                    t.status = "completed";
+                    t.progress = 100.0f;
+                    t.speed = "Done";
+                    t.eta = "00:00";
+                } else {
+                    t.status = "error";
+                    t.error_message = "Download process exited with code " + std::to_string(exitCode);
                 }
-            } else if (exitCode == 0) {
-                t.status = "completed";
-                t.progress = 100.0f;
-                t.speed = "Done";
-                t.eta = "00:00";
-            } else {
-                t.status = "error";
-                t.error_message = "Download process exited with code " + std::to_string(exitCode);
+
+                if (t.status == "completed" || t.status == "cancelled" || t.status == "error") {
+                    finishedTask = t;
+                    shouldAddHistory = true;
+                }
             }
         }
     }
+
+    if (shouldAddHistory) {
+        addToHistory(finishedTask);
+    }
+}
+
+std::vector<DownloadHistoryItem> DownloadManager::getHistory() {
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    return history_;
+}
+
+bool DownloadManager::clearHistory() {
+    {
+        std::lock_guard<std::mutex> lock(history_mutex_);
+        history_.clear();
+    }
+    saveHistoryToFile();
+    return true;
+}
+
+bool DownloadManager::removeHistoryItem(const std::string& historyId) {
+    bool found = false;
+    {
+        std::lock_guard<std::mutex> lock(history_mutex_);
+        auto it = std::remove_if(history_.begin(), history_.end(), [&](const DownloadHistoryItem& item) {
+            return item.id == historyId;
+        });
+        if (it != history_.end()) {
+            history_.erase(it, history_.end());
+            found = true;
+        }
+    }
+    if (found) {
+        saveHistoryToFile();
+    }
+    return found;
+}
+
+void DownloadManager::loadHistoryFromFile() {
+    std::ifstream file("download_history.json");
+    if (!file.is_open()) return;
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string jsonStr = buffer.str();
+
+    std::regex objectRegex(R"raw(\{([^{}]+)\})raw");
+    std::sregex_iterator iter(jsonStr.begin(), jsonStr.end(), objectRegex);
+    std::sregex_iterator end;
+
+    std::lock_guard<std::mutex> lock(history_mutex_);
+    history_.clear();
+
+    auto getKey = [](const std::string& str, const std::string& key) -> std::string {
+        std::regex re("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"");
+        std::smatch m;
+        if (std::regex_search(str, m, re)) return m[1].str();
+        std::regex reNum("\"" + key + "\"\\s*:\\s*([0-9]+)");
+        if (std::regex_search(str, m, reNum)) return m[1].str();
+        return "";
+    };
+
+    while (iter != end) {
+        std::string objStr = iter->str();
+        DownloadHistoryItem item;
+        item.id = getKey(objStr, "id");
+        item.title = getKey(objStr, "title");
+        item.url = getKey(objStr, "url");
+        item.thumbnail = getKey(objStr, "thumbnail");
+        item.type = getKey(objStr, "type");
+        item.format = getKey(objStr, "format");
+        item.filepath = getKey(objStr, "filepath");
+        item.status = getKey(objStr, "status");
+        item.timestamp = getKey(objStr, "timestamp");
+        std::string sizeStr = getKey(objStr, "filesize");
+        if (!sizeStr.empty()) item.filesize = std::stoll(sizeStr);
+
+        if (!item.id.empty()) {
+            history_.push_back(item);
+        }
+        ++iter;
+    }
+}
+
+void DownloadManager::saveHistoryToFile() {
+    std::vector<DownloadHistoryItem> copy;
+    {
+        std::lock_guard<std::mutex> lock(history_mutex_);
+        copy = history_;
+    }
+
+    std::ofstream file("download_history.json", std::ios::trunc);
+    if (!file.is_open()) return;
+
+    file << "[\n";
+    for (size_t i = 0; i < copy.size(); ++i) {
+        const auto& h = copy[i];
+        file << "  {\n"
+             << "    \"id\": \"" << escapeJsonStr(h.id) << "\",\n"
+             << "    \"title\": \"" << escapeJsonStr(h.title) << "\",\n"
+             << "    \"url\": \"" << escapeJsonStr(h.url) << "\",\n"
+             << "    \"thumbnail\": \"" << escapeJsonStr(h.thumbnail) << "\",\n"
+             << "    \"type\": \"" << escapeJsonStr(h.type) << "\",\n"
+             << "    \"format\": \"" << escapeJsonStr(h.format) << "\",\n"
+             << "    \"filepath\": \"" << escapeJsonStr(h.filepath) << "\",\n"
+             << "    \"status\": \"" << escapeJsonStr(h.status) << "\",\n"
+             << "    \"timestamp\": \"" << escapeJsonStr(h.timestamp) << "\",\n"
+             << "    \"filesize\": " << h.filesize << "\n"
+             << "  }" << (i + 1 < copy.size() ? "," : "") << "\n";
+    }
+    file << "]\n";
+}
+
+void DownloadManager::addToHistory(const DownloadTask& task) {
+    if (task.status == "paused") return;
+
+    DownloadHistoryItem item;
+    item.id = generateUniqueId();
+    item.title = task.title;
+    item.url = task.url;
+    item.thumbnail = task.thumbnail;
+    item.type = task.options.type;
+    item.format = (task.options.type == "audio") ? task.options.audio_format : task.options.format;
+    item.filepath = task.filepath;
+    item.status = task.status;
+    item.options = task.options;
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    char dateBuf[64];
+    std::strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d %H:%M", std::localtime(&now_c));
+    item.timestamp = dateBuf;
+
+    if (!task.filepath.empty()) {
+        std::ifstream f(task.filepath, std::ios::binary | std::ios::ate);
+        if (f.is_open()) {
+            item.filesize = f.tellg();
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(history_mutex_);
+        history_.insert(history_.begin(), item);
+        if (history_.size() > 500) {
+            history_.resize(500);
+        }
+    }
+    saveHistoryToFile();
 }

@@ -330,6 +330,57 @@ std::string HttpServer::handleApiRequest(const std::string& method, const std::s
         download_manager_.clearCompletedTasks();
         return "{\"success\":true}";
 
+    } else if (path == "/api/pause-all" && method == "POST") {
+        download_manager_.pauseAllTasks();
+        return "{\"success\":true}";
+
+    } else if (path == "/api/resume-all" && method == "POST") {
+        download_manager_.resumeAllTasks();
+        return "{\"success\":true}";
+
+    } else if (path == "/api/history" && method == "GET") {
+        auto history = download_manager_.getHistory();
+        std::stringstream ss;
+        ss << "[";
+        for (size_t i = 0; i < history.size(); ++i) {
+            const auto& h = history[i];
+            ss << "{"
+               << "\"id\":\"" << h.id << "\","
+               << "\"title\":\"" << YouTubeParser::escapeJsonString(h.title) << "\","
+               << "\"url\":\"" << YouTubeParser::escapeJsonString(h.url) << "\","
+               << "\"thumbnail\":\"" << YouTubeParser::escapeJsonString(h.thumbnail) << "\","
+               << "\"type\":\"" << YouTubeParser::escapeJsonString(h.type) << "\","
+               << "\"format\":\"" << YouTubeParser::escapeJsonString(h.format) << "\","
+               << "\"filepath\":\"" << YouTubeParser::escapeJsonString(h.filepath) << "\","
+               << "\"status\":\"" << YouTubeParser::escapeJsonString(h.status) << "\","
+               << "\"timestamp\":\"" << YouTubeParser::escapeJsonString(h.timestamp) << "\","
+               << "\"filesize\":" << h.filesize
+               << "}" << (i + 1 < history.size() ? "," : "");
+        }
+        ss << "]";
+        return ss.str();
+
+    } else if (path == "/api/history/clear" && method == "POST") {
+        download_manager_.clearHistory();
+        return "{\"success\":true}";
+
+    } else if (path == "/api/history/remove" && method == "POST") {
+        std::string id = getJsonValue(body, "id");
+        bool res = download_manager_.removeHistoryItem(id);
+        return "{\"success\":" + std::string(res ? "true" : "false") + "}";
+
+    } else if (path == "/api/open-file" && method == "POST") {
+        std::string filepath = getJsonValue(body, "path");
+        if (!filepath.empty()) {
+#ifdef _WIN32
+            ShellExecuteA(NULL, "open", filepath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+#else
+            std::string cmd = "xdg-open \"" + filepath + "\"";
+            system(cmd.c_str());
+#endif
+        }
+        return "{\"success\":true}";
+
     } else if (path == "/api/open-folder" && method == "POST") {
         std::string dir = getJsonValue(body, "path");
         if (dir.empty()) {

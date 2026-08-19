@@ -40,6 +40,20 @@ struct DownloadTask {
     bool cancel_requested = false;
 };
 
+struct DownloadHistoryItem {
+    std::string id;
+    std::string title;
+    std::string url;
+    std::string thumbnail;
+    std::string type;         // "video" or "audio"
+    std::string format;       // "1080p", "mp3", etc.
+    std::string filepath;
+    std::string status;       // "completed", "error", "cancelled"
+    std::string timestamp;    // ISO / formatted date
+    long long filesize = 0;
+    DownloadOptions options;
+};
+
 class DownloadManager {
 public:
     DownloadManager();
@@ -49,11 +63,18 @@ public:
     bool cancelTask(const std::string& taskId);
     bool pauseTask(const std::string& taskId);
     bool resumeTask(const std::string& taskId);
+    void pauseAllTasks();
+    void resumeAllTasks();
     bool removeTask(const std::string& taskId);
     void clearCompletedTasks();
 
     std::vector<DownloadTask> getAllTasks();
     DownloadTask getTask(const std::string& taskId);
+
+    // Persistent History API
+    std::vector<DownloadHistoryItem> getHistory();
+    bool clearHistory();
+    bool removeHistoryItem(const std::string& historyId);
 
     void setMaxConcurrentDownloads(int maxDownloads);
     int getMaxConcurrentDownloads() const;
@@ -69,8 +90,14 @@ private:
     void runTaskProcess(DownloadTask& task);
     std::string buildYtDlpCommand(const DownloadTask& task);
 
+    void loadHistoryFromFile();
+    void saveHistoryToFile();
+    void addToHistory(const DownloadTask& task);
+
     std::vector<DownloadTask> tasks_;
+    std::vector<DownloadHistoryItem> history_;
     mutable std::mutex tasks_mutex_;
+    mutable std::mutex history_mutex_;
     std::thread worker_;
     std::atomic<bool> stop_worker_{false};
 

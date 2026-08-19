@@ -23,6 +23,11 @@
                     <span>Downloads</span>
                     <span class="badge" id="activeCountBadge">0</span>
                 </a>
+                <a href="#" class="nav-item" data-tab="history" id="navHistory">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                    <span>History</span>
+                    <span class="badge" id="historyCountBadge">0</span>
+                </a>
                 <a href="#" class="nav-item" data-tab="smartmode" id="navSmartMode">
                     <i class="fa-solid fa-bolt"></i>
                     <span>Smart Mode</span>
@@ -58,9 +63,23 @@
                         </label>
                         <span class="switch-label">Smart Mode</span>
                     </div>
+
+                    <div class="location-pill-wrapper" id="btnToolbarLocation" title="Click to view/open Download Directory">
+                        <i class="fa-solid fa-folder-open"></i>
+                        <span id="toolbarLocationText">Downloads Folder</span>
+                    </div>
                 </div>
 
                 <div class="right-actions">
+                    <button class="btn btn-icon btn-action-pill" id="btnPauseAll" title="Pause All Active Downloads">
+                        <i class="fa-solid fa-pause"></i>
+                        <span>Pause All</span>
+                    </button>
+                    <button class="btn btn-icon btn-action-pill" id="btnResumeAll" title="Resume All Paused Downloads">
+                        <i class="fa-solid fa-play"></i>
+                        <span>Resume All</span>
+                    </button>
+
                     <div class="speed-limiter-wrapper">
                         <i class="fa-solid fa-gauge-high"></i>
                         <select id="speedLimitSelect" class="custom-select">
@@ -76,7 +95,7 @@
                     <button class="btn btn-icon" id="btnOpenFolder" title="Open Downloads Folder">
                         <i class="fa-solid fa-folder-open"></i>
                     </button>
-                    <button class="btn btn-icon" id="btnClearCompleted" title="Clear Completed Tasks">
+                    <button class="btn btn-icon" id="btnClearCompleted" title="Clear Completed Queue Tasks">
                         <i class="fa-solid fa-broom"></i>
                     </button>
                 </div>
@@ -101,6 +120,67 @@
 
                 <div class="download-list" id="downloadList">
                     <!-- Dynamic Download Cards -->
+                </div>
+            </section>
+
+            <!-- View Panel: History -->
+            <section class="view-panel" id="viewHistory" style="display:none;">
+                <div class="queue-header">
+                    <h2>Download History</h2>
+                    <div class="queue-stats">
+                        <span id="historyCountText">0 Saved Items</span>
+                        <button class="btn btn-sm btn-danger-outline" id="btnClearHistory" title="Clear all download history">
+                            <i class="fa-solid fa-trash-can"></i> Clear History
+                        </button>
+                    </div>
+                </div>
+
+                <!-- History Stats Header Cards -->
+                <div class="history-stats-bar">
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="statCompletedCount">0</span>
+                            <span class="stat-lbl">Finished Files</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fa-solid fa-hard-drive"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val" id="statTotalSize">0 MB</span>
+                            <span class="stat-lbl">Downloaded Storage</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon"><i class="fa-solid fa-folder-open"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-val location-val" id="statHistoryLocation" title="Active download folder">Downloads</span>
+                            <span class="stat-lbl">Download Location</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Search & Filters -->
+                <div class="history-toolbar">
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="historySearchInput" placeholder="Search downloaded titles, URLs, formats...">
+                    </div>
+                    <div class="filter-pills">
+                        <button class="history-filter-pill active" data-filter="all">All Files</button>
+                        <button class="history-filter-pill" data-filter="video">Videos</button>
+                        <button class="history-filter-pill" data-filter="audio">Audio</button>
+                    </div>
+                </div>
+
+                <div class="empty-state" id="historyEmptyState">
+                    <div class="empty-icon"><i class="fa-solid fa-clock-rotate-left"></i></div>
+                    <h3>No Download History Yet</h3>
+                    <p>Completed, cancelled, or past downloads will be recorded here automatically.</p>
+                </div>
+
+                <div class="download-list" id="historyList">
+                    <!-- Dynamic History Cards -->
                 </div>
             </section>
 
