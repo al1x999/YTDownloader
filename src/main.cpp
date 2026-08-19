@@ -43,7 +43,12 @@ int main(int argc, char* argv[]) {
     std::cout << "[YTDownloader] Opening Desktop UI at " << appUrl << " ...\n";
 
 #ifdef _WIN32
-    ShellExecuteA(NULL, "open", appUrl.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    // Launch standalone Desktop App window container using msedge --app=http://127.0.0.1:port
+    std::string edgeCmd = "start msedge --app=" + appUrl;
+    int res = system(edgeCmd.c_str());
+    if (res != 0) {
+        ShellExecuteA(NULL, "open", appUrl.c_str(), NULL, NULL, SW_SHOWNORMAL);
+    }
 #else
     std::string openCmd = "xdg-open " + appUrl;
     system(openCmd.c_str());

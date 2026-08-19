@@ -25,4 +25,10 @@ if(WIN32)
     target_link_libraries(YTDownloaderCore PRIVATE ws2_32 shlwapi)
 endif()
 
+add_custom_command(
+    TARGET YTDownloaderCore POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/ui $<TARGET_FILE_DIR:YTDownloaderCore>/ui
+)
+
 message(STATUS "YTDownloader Core CMake configuration complete.")

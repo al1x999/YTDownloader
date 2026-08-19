@@ -178,11 +178,36 @@ std::string HttpServer::serveStaticFile(const std::string& reqPath) {
         relPath = "/index.html";
     }
 
-    std::string fullPath = "ui" + relPath;
-    std::ifstream file(fullPath, std::ios::binary);
+    std::vector<std::string> searchPaths = {
+        "ui" + relPath,
+        "../ui" + relPath,
+        "../../ui" + relPath
+    };
+
+#ifdef _WIN32
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) > 0) {
+        std::string path(exePath);
+        std::size_t lastSlash = path.find_last_of("\\/");
+        if (lastSlash != std::string::npos) {
+            std::string dir = path.substr(0, lastSlash);
+            std::string normRel = relPath;
+            std::replace(normRel.begin(), normRel.end(), '/', '\\');
+            searchPaths.push_back(dir + normRel);
+            searchPaths.push_back(dir + "\\ui" + normRel);
+            searchPaths.push_back(dir + "\\..\\ui" + normRel);
+        }
+    }
+#endif
+
+    std::ifstream file;
+    for (const auto& tryPath : searchPaths) {
+        file.open(tryPath, std::ios::binary);
+        if (file.is_open()) break;
+    }
 
     if (!file.is_open()) {
-        std::string notFound = "<h1>404 Not Found</h1>";
+        std::string notFound = "<h1>404 Not Found</h1><p>Could not locate UI resource: " + reqPath + "</p>";
         std::stringstream ss;
         ss << "HTTP/1.1 404 Not Found\r\n"
            << "Content-Type: text/html\r\n"
