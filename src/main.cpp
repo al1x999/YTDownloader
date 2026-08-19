@@ -53,8 +53,10 @@ void launchDesktopAppWindow(const std::string& appUrl) {
     );
 
     if (success) {
+        WaitForSingleObject(pi.hProcess, INFINITE);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
+        g_running = false;
     } else {
         ShellExecuteA(NULL, "open", "msedge.exe", ("--app=" + appUrl).c_str(), NULL, SW_SHOWNORMAL);
     }
