@@ -19,7 +19,7 @@ set(HEADERS
     src/http_server.h
 )
 
-add_executable(YTDownloaderCore ${SOURCES} ${HEADERS})
+add_executable(YTDownloaderCore WIN32 ${SOURCES} ${HEADERS})
 
 if(WIN32)
     target_link_libraries(YTDownloaderCore PRIVATE ws2_32 shlwapi)
